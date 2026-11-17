@@ -42,12 +42,27 @@
         </div>
         <label for="email">Email</label>
         <input id="email" type="email" required autocomplete="email">
-        <label for="password">Password</label>
-        <input id="password" type="password" required minlength="6" autocomplete="current-password">
+        <div id="password-field">
+          <label for="password">Password</label>
+          <input id="password" type="password" required minlength="6" autocomplete="current-password">
+        </div>
         <button id="submit-btn" type="submit">Log in</button>
       </form>
       <div class="msg" id="msg"></div>
+      <div class="switch" id="forgot-text"><a id="forgot-link">Forgot password?</a></div>
       <div class="switch" id="switch-text">No account? <a id="switch-link">Sign up</a></div>
+    </section>
+
+    <!-- Set a new password (reached from the reset email) -->
+    <section id="reset-view" hidden>
+      <h1>Choose a new password</h1>
+      <p class="sub">Enter a new password for your account.</p>
+      <form id="reset-form">
+        <label for="new-password">New password</label>
+        <input id="new-password" type="password" required minlength="6" autocomplete="new-password">
+        <button id="reset-btn" type="submit">Save new password</button>
+      </form>
+      <div class="msg" id="reset-msg"></div>
     </section>
 
     <!-- Logged-in view -->
@@ -65,27 +80,43 @@
     // the database's security rules decide what it can access.
     const SUPABASE_URL = 'https://lshoplxauhdkspowaorj.supabase.co';
     const SUPABASE_KEY = 'sb_publishable_nfKoHGzV3GMAaWnwFpuxag_QoD0D-7G';
+    // Read before the client clears the link details from the address bar
+    let recovering = window.location.hash.includes('type=recovery');
     const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
     const $ = id => document.getElementById(id);
+    const pageUrl = window.location.origin + window.location.pathname;
     let mode = 'login';
+
+    const MODES = {
+      login:  { title: 'Log in', sub: 'Welcome back. Enter your details.', btn: 'Log in',
+                switchText: 'No account? ', switchLink: 'Sign up', switchTo: 'signup' },
+      signup: { title: 'Create account', sub: 'Sign up with your email.', btn: 'Sign up',
+                switchText: 'Already have an account? ', switchLink: 'Log in', switchTo: 'login' },
+      forgot: { title: 'Reset password', sub: "Enter your email and we'll send you a reset link.", btn: 'Send reset link',
+                switchText: 'Remembered it? ', switchLink: 'Log in', switchTo: 'login' }
+    };
 
     function setMode(next) {
       mode = next;
-      const signup = mode === 'signup';
-      $('form-title').textContent = signup ? 'Create account' : 'Log in';
-      $('form-sub').textContent = signup ? 'Sign up with your email.' : 'Welcome back. Enter your details.';
-      $('submit-btn').textContent = signup ? 'Sign up' : 'Log in';
-      $('name-field').hidden = !signup;
-      $('password').autocomplete = signup ? 'new-password' : 'current-password';
-      $('switch-text').firstChild.textContent = signup ? 'Already have an account? ' : 'No account? ';
-      $('switch-link').textContent = signup ? 'Log in' : 'Sign up';
+      const m = MODES[mode];
+      $('form-title').textContent = m.title;
+      $('form-sub').textContent = m.sub;
+      $('submit-btn').textContent = m.btn;
+      $('name-field').hidden = mode !== 'signup';
+      $('password-field').hidden = mode === 'forgot';
+      $('password').required = mode !== 'forgot';
+      $('forgot-text').hidden = mode !== 'login';
+      $('password').autocomplete = mode === 'signup' ? 'new-password' : 'current-password';
+      $('switch-text').firstChild.textContent = m.switchText;
+      $('switch-link').textContent = m.switchLink;
       showMsg('');
     }
 
-    function showMsg(text, kind = 'error') {
-      $('msg').textContent = text;
-      $('msg').className = 'msg ' + kind;
+    function showMsg(text, kind = 'error', el = 'msg') {
+      if (/rate limit/i.test(text)) text = 'Too many emails sent recently. Please try again in an hour.';
+      $(el).textContent = text;
+      $(el).className = 'msg ' + kind;
     }
 
     async function showHome(user) {
@@ -93,16 +124,15 @@
       const { data: profile } = await db.from('profiles').select('full_name, created_at').eq('id', user.id).single();
       $('who').textContent = profile?.full_name || user.email;
       $('joined').textContent = new Date(profile?.created_at || user.created_at).toLocaleDateString();
-      $('auth-view').hidden = true;
-      $('home-view').hidden = false;
+      showView('home-view');
     }
 
-    function showAuth() {
-      $('home-view').hidden = true;
-      $('auth-view').hidden = false;
+    function showView(id) {
+      for (const v of ['auth-view', 'home-view', 'reset-view']) $(v).hidden = v !== id;
     }
 
-    $('switch-link').onclick = () => setMode(mode === 'login' ? 'signup' : 'login');
+    $('switch-link').onclick = () => setMode(MODES[mode].switchTo);
+    $('forgot-link').onclick = () => setMode('forgot');
 
     $('auth-form').onsubmit = async e => {
       e.preventDefault();
@@ -117,11 +147,15 @@
           options: {
             data: { full_name: $('full-name').value.trim() },
             // Send the confirmation link back to this page (must be allowed in Supabase's Redirect URLs)
-            emailRedirectTo: window.location.origin + window.location.pathname
+            emailRedirectTo: pageUrl
           }
         });
         if (error) showMsg(error.message);
         else if (!data.session) showMsg('Check your email to confirm your account, then log in.', 'ok');
+      } else if (mode === 'forgot') {
+        const { error } = await db.auth.resetPasswordForEmail(email, { redirectTo: pageUrl });
+        if (error) showMsg(error.message);
+        else showMsg('If that email has an account, a reset link is on its way.', 'ok');
       } else {
         const { error } = await db.auth.signInWithPassword({ email, password });
         if (error) showMsg(error.message);
@@ -129,12 +163,24 @@
       $('submit-btn').disabled = false;
     };
 
+    $('reset-form').onsubmit = async e => {
+      e.preventDefault();
+      $('reset-btn').disabled = true;
+      const { data, error } = await db.auth.updateUser({ password: $('new-password').value });
+      $('reset-btn').disabled = false;
+      if (error) return showMsg(error.message, 'error', 'reset-msg');
+      recovering = false;
+      showHome(data.user);
+    };
+
     $('logout-btn').onclick = () => db.auth.signOut();
 
     // React to login / logout (also restores the session when the page reloads)
-    db.auth.onAuthStateChange((_event, session) => {
-      if (session) setTimeout(() => showHome(session.user), 0);
-      else showAuth();
+    db.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') recovering = true;
+      if (session && recovering) showView('reset-view');
+      else if (session) setTimeout(() => showHome(session.user), 0);
+      else showView('auth-view');
     });
   </script>
 </body>
