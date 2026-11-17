@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Member Login</title>
+  <style>
+    :root { --bg:#f5f6f8; --card:#fff; --text:#1d2330; --muted:#667085; --accent:#2f6fed; --border:#d9dde5; --error:#c0392b; --ok:#1e8e5a; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg:#14161b; --card:#1e2128; --text:#e8eaef; --muted:#9aa3b2; --accent:#5b8ef5; --border:#323743; --error:#ef6b5b; --ok:#4cc38a; }
+    }
+    * { box-sizing: border-box; }
+    body { margin:0; min-height:100vh; display:grid; place-items:center; padding:16px;
+           background:var(--bg); color:var(--text); font:16px/1.5 system-ui, -apple-system, sans-serif; }
+    .card { width:100%; max-width:380px; background:var(--card); border:1px solid var(--border);
+            border-radius:12px; padding:28px; }
+    h1 { margin:0 0 4px; font-size:22px; }
+    p.sub { margin:0 0 20px; color:var(--muted); font-size:14px; }
+    label { display:block; font-size:14px; margin:12px 0 4px; }
+    input { width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:8px;
+            background:transparent; color:var(--text); font-size:15px; }
+    button { width:100%; margin-top:18px; padding:11px; border:0; border-radius:8px;
+             background:var(--accent); color:#fff; font-size:15px; font-weight:600; cursor:pointer; }
+    button:disabled { opacity:.6; cursor:default; }
+    .switch { margin-top:16px; text-align:center; font-size:14px; color:var(--muted); }
+    .switch a { color:var(--accent); cursor:pointer; }
+    .msg { margin-top:14px; font-size:14px; min-height:1em; }
+    .msg.error { color:var(--error); } .msg.ok { color:var(--ok); }
+    [hidden] { display:none !important; }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <!-- Log in / Sign up form -->
+    <section id="auth-view">
+      <h1 id="form-title">Log in</h1>
+      <p class="sub" id="form-sub">Welcome back. Enter your details.</p>
+      <form id="auth-form">
+        <div id="name-field" hidden>
+          <label for="full-name">Full name</label>
+          <input id="full-name" autocomplete="name">
+        </div>
+        <label for="email">Email</label>
+        <input id="email" type="email" required autocomplete="email">
+        <label for="password">Password</label>
+        <input id="password" type="password" required minlength="6" autocomplete="current-password">
+        <button id="submit-btn" type="submit">Log in</button>
+      </form>
+      <div class="msg" id="msg"></div>
+      <div class="switch" id="switch-text">No account? <a id="switch-link">Sign up</a></div>
+    </section>
+
+    <!-- Logged-in view -->
+    <section id="home-view" hidden>
+      <h1>Hi, <span id="who"></span> 👋</h1>
+      <p class="sub">You're logged in. This page is only visible to signed-in users.</p>
+      <p style="font-size:14px">Account created: <span id="joined"></span></p>
+      <button id="logout-btn">Log out</button>
+    </section>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+  <script>
+    // Your Supabase project. The publishable key is safe to put in a webpage:
+    // the database's security rules decide what it can access.
+    const SUPABASE_URL = 'https://lshoplxauhdkspowaorj.supabase.co';
+    const SUPABASE_KEY = 'sb_publishable_nfKoHGzV3GMAaWnwFpuxag_QoD0D-7G';
+    const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+    const $ = id => document.getElementById(id);
+    let mode = 'login';
+
+    function setMode(next) {
+      mode = next;
+      const signup = mode === 'signup';
+      $('form-title').textContent = signup ? 'Create account' : 'Log in';
+      $('form-sub').textContent = signup ? 'Sign up with your email.' : 'Welcome back. Enter your details.';
+      $('submit-btn').textContent = signup ? 'Sign up' : 'Log in';
+      $('name-field').hidden = !signup;
+      $('password').autocomplete = signup ? 'new-password' : 'current-password';
+      $('switch-text').firstChild.textContent = signup ? 'Already have an account? ' : 'No account? ';
+      $('switch-link').textContent = signup ? 'Log in' : 'Sign up';
+      showMsg('');
+    }
+
+    function showMsg(text, kind = 'error') {
+      $('msg').textContent = text;
+      $('msg').className = 'msg ' + kind;
+    }
+
+    async function showHome(user) {
+      // Read this user's row from the profiles table (security rules only allow their own row)
+      const { data: profile } = await db.from('profiles').select('full_name, created_at').eq('id', user.id).single();
+      $('who').textContent = profile?.full_name || user.email;
+      $('joined').textContent = new Date(profile?.created_at || user.created_at).toLocaleDateString();
+      $('auth-view').hidden = true;
+      $('home-view').hidden = false;
+    }
+
+    function showAuth() {
+      $('home-view').hidden = true;
+      $('auth-view').hidden = false;
+    }
+
+    $('switch-link').onclick = () => setMode(mode === 'login' ? 'signup' : 'login');
+
+    $('auth-form').onsubmit = async e => {
+      e.preventDefault();
+      const email = $('email').value.trim();
+      const password = $('password').value;
+      $('submit-btn').disabled = true;
+      showMsg('');
+
+      if (mode === 'signup') {
+        const { data, error } = await db.auth.signUp({
+          email, password,
+          options: { data: { full_name: $('full-name').value.trim() } }
+        });
+        if (error) showMsg(error.message);
+        else if (!data.session) showMsg('Check your email to confirm your account, then log in.', 'ok');
+      } else {
+        const { error } = await db.auth.signInWithPassword({ email, password });
+        if (error) showMsg(error.message);
+      }
+      $('submit-btn').disabled = false;
+    };
+
+    $('logout-btn').onclick = () => db.auth.signOut();
+
+    // React to login / logout (also restores the session when the page reloads)
+    db.auth.onAuthStateChange((_event, session) => {
+      if (session) setTimeout(() => showHome(session.user), 0);
+      else showAuth();
+    });
+  </script>
+</body>
+</html>
