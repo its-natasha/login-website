@@ -114,7 +114,11 @@
       if (mode === 'signup') {
         const { data, error } = await db.auth.signUp({
           email, password,
-          options: { data: { full_name: $('full-name').value.trim() } }
+          options: {
+            data: { full_name: $('full-name').value.trim() },
+            // Send the confirmation link back to this page (must be allowed in Supabase's Redirect URLs)
+            emailRedirectTo: window.location.origin + window.location.pathname
+          }
         });
         if (error) showMsg(error.message);
         else if (!data.session) showMsg('Check your email to confirm your account, then log in.', 'ok');
